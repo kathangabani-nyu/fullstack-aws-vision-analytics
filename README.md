@@ -1,161 +1,192 @@
-# Photo Album Search Application
+# Photo Album Web Application
 
-A serverless photo album web application with natural language search capabilities using AWS services.
+A serverless photo album application with natural language search capabilities, built on AWS.
 
 ## Architecture
 
-- **Backend**: Python Lambda functions (index-photos, search-photos)
-- **Frontend**: Vanilla JavaScript/HTML/CSS
-- **Storage**: S3 buckets (B1: frontend, B2: photos)
-- **Search**: Amazon OpenSearch Service (domain: "photos")
-- **AI Services**: Rekognition (label detection), Lex (query disambiguation)
-- **API**: API Gateway with S3 proxy and Lambda integration
-- **CI/CD**: CodePipeline for both frontend and backend
-- **Infrastructure**: CloudFormation template
+```
+Frontend (S3) --> API Gateway --> Lambda (search-photos) --> Amazon Lex
+                      |                    |
+                      |                    v
+                      |              OpenSearch
+                      |                    ^
+                      v                    |
+                Photos S3 --> Lambda (index-photos) --> Rekognition
+```
+
+## Components
+
+| Component | AWS Service | Description |
+|-----------|-------------|-------------|
+| Frontend (B1) | S3 Static Website | Web interface for search and upload |
+| Photos Storage (B2) | S3 Bucket | Stores uploaded photos |
+| Index Lambda (LF1) | Lambda | Indexes photos using Rekognition labels |
+| Search Lambda (LF2) | Lambda | Handles natural language search queries |
+| Search Bot | Amazon Lex | Extracts keywords from natural language |
+| Photo Index | OpenSearch | Stores searchable photo metadata |
+| API | API Gateway | REST API with S3 proxy for uploads |
+| CI/CD | CodePipeline | Automated deployments from GitHub |
+
+## Features
+
+- Upload photos with custom labels via web interface
+- Automatic object detection using AWS Rekognition
+- Natural language search (e.g., "show me cats and dogs")
+- Custom label support via `x-amz-meta-customLabels` header
+- Keyword extraction using Amazon Lex
+- Full-text search across all detected and custom labels
 
 ## Project Structure
 
 ```
-assignment-3/
+.
 ├── backend/
+│   ├── cloudformation/
+│   │   └── template.yaml          # CloudFormation infrastructure template
 │   ├── lambda/
 │   │   ├── index-photos/
-│   │   │   ├── lambda_function.py
-│   │   │   └── requirements.txt
+│   │   │   └── lambda_function.py # Photo indexing Lambda (LF1)
 │   │   └── search-photos/
-│   │       ├── lambda_function.py
-│   │       └── requirements.txt
-│   └── cloudformation/
-│       └── template.yaml
+│   │       └── lambda_function.py # Photo search Lambda (LF2)
+│   ├── scripts/                   # Deployment and setup scripts
+│   └── buildspec.yml              # CodeBuild specification for backend
 ├── frontend/
-│   ├── index.html
-│   ├── styles.css
-│   ├── app.js
-│   └── buildspec.yml
+│   ├── index.html                 # Main HTML page
+│   ├── styles.css                 # Stylesheet
+│   ├── app.js                     # Frontend JavaScript
+│   └── buildspec.yml              # CodeBuild specification for frontend
 └── README.md
 ```
 
-## Setup Instructions
+## API Endpoints
+
+### PUT /photos/{filename}
+Upload a photo to the album.
+
+**Headers:**
+- `x-api-key`: API key (required)
+- `Content-Type`: Image MIME type
+- `x-amz-meta-customLabels`: Comma-separated custom labels (optional)
+
+**Example:**
+```bash
+curl -X PUT "https://{api-id}.execute-api.us-east-1.amazonaws.com/prod/photos/my-photo.jpg" \
+  -H "x-api-key: {api-key}" \
+  -H "Content-Type: image/jpeg" \
+  -H "x-amz-meta-customLabels: vacation, beach" \
+  --data-binary @my-photo.jpg
+```
+
+### GET /search?q={query}
+Search for photos using natural language.
+
+**Parameters:**
+- `q`: Search query (e.g., "show me dogs", "cats and birds")
+
+**Response:**
+```json
+[
+  {
+    "objectKey": "photo.jpg",
+    "bucket": "photos-bucket",
+    "createdTimestamp": "2024-11-30T12:00:00",
+    "labels": ["dog", "pet", "animal"]
+  }
+]
+```
+
+## Deployment
 
 ### Prerequisites
+- AWS Account with appropriate permissions
+- AWS CLI configured
+- Python 3.9+
+- GitHub repository connected to AWS CodePipeline
 
-1. AWS Account with appropriate permissions
-2. AWS CLI configured (region: us-east-1)
-3. Python 3.9+ installed locally
-4. GitHub repository: https://github.com/kathangabani-nyu/fullstack-aws-vision-analytics
-
-### Step 1: Create OpenSearch Domain
-
-1. Go to Amazon OpenSearch Service console
-2. Create a new domain named "photos"
-3. Instance type: t2.small.search (for cost optimization)
-4. Configure access policy to allow Lambda functions access
-5. Note the OpenSearch endpoint URL
-
-### Step 2: Create Lex Bot
-
-1. Go to Amazon Lex console
-2. Create a new bot with intent "SearchIntent"
-3. Add training utterances:
-   - Keywords: "trees", "birds", "cats", "dogs"
-   - Sentences: "show me trees", "show me photos with trees and birds", "find cats and dogs"
-4. Build and publish the bot
-5. Note the bot name and alias
-
-### Step 3: Deploy CloudFormation Template
-
+### CloudFormation Deployment
 ```bash
 aws cloudformation create-stack \
   --stack-name photo-album-stack \
   --template-body file://backend/cloudformation/template.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region us-east-1
+  --capabilities CAPABILITY_IAM
 ```
 
-### Step 4: Configure Lambda Functions
+### Manual Setup Required
+1. **OpenSearch Domain**: Create domain "photos" with fine-grained access control
+2. **Lex Bot**: Create "PhotoSearchBot" with SearchIntent
+3. **CodePipeline**: Connect GitHub repository for CI/CD
 
-After CloudFormation deployment, update Lambda environment variables:
+## OpenSearch Index Schema
 
-**index-photos Lambda:**
-- `OPENSEARCH_ENDPOINT`: Your OpenSearch endpoint
-- `OPENSEARCH_INDEX`: "photos"
+```json
+{
+  "objectKey": "string",
+  "bucket": "string", 
+  "createdTimestamp": "datetime",
+  "labels": ["string"]
+}
+```
 
-**search-photos Lambda:**
-- `OPENSEARCH_ENDPOINT`: Your OpenSearch endpoint
-- `OPENSEARCH_INDEX`: "photos"
-- `LEX_BOT_NAME`: Your Lex bot name
-- `LEX_BOT_ALIAS`: Your Lex bot alias
+## Lambda Environment Variables
 
-### Step 5: Set Up S3 Event Trigger
+### index-photos
+| Variable | Description |
+|----------|-------------|
+| OPENSEARCH_ENDPOINT | OpenSearch domain endpoint |
+| OPENSEARCH_INDEX | Index name (default: photos) |
+| OPENSEARCH_USERNAME | Master user username |
+| OPENSEARCH_PASSWORD | Master user password |
 
-1. Go to S3 bucket B2 (photos bucket)
-2. Properties → Event notifications
-3. Create event notification:
-   - Event type: PUT
-   - Destination: Lambda function (index-photos)
+### search-photos
+| Variable | Description |
+|----------|-------------|
+| OPENSEARCH_ENDPOINT | OpenSearch domain endpoint |
+| OPENSEARCH_INDEX | Index name (default: photos) |
+| OPENSEARCH_USERNAME | Master user username |
+| OPENSEARCH_PASSWORD | Master user password |
+| LEX_BOT_ID | Lex bot identifier |
+| LEX_BOT_ALIAS_ID | Lex bot alias identifier |
 
-### Step 6: Configure API Gateway
+## Lex Bot Configuration
 
-1. Deploy the API
-2. Create API key and associate with both methods
-3. Generate JavaScript SDK
-4. Download SDK and update frontend/app.js with SDK path
+**Bot Name:** PhotoSearchBot
 
-### Step 7: Deploy Frontend
+**Intent:** SearchIntent
 
-1. Upload frontend files to S3 bucket B1
-2. Enable static website hosting
-3. Note the website URL
+**Sample Utterances:**
+- `{keyword1}`
+- `show me {keyword1}`
+- `find {keyword1}`
+- `{keyword1} and {keyword2}`
+- `show me {keyword1} and {keyword2}`
+- `photos of {keyword1}`
 
-### Step 8: Set Up CodePipeline
-
-**Backend Pipeline (P1):**
-1. Create pipeline with GitHub source
-2. Repository: https://github.com/kathangabani-nyu/fullstack-aws-vision-analytics
-3. Branch: main (or your default branch)
-4. Build provider: AWS CodeBuild
-5. Deploy provider: AWS Lambda
-
-**Frontend Pipeline (P2):**
-1. Create pipeline with GitHub source
-2. Repository: https://github.com/kathangabani-nyu/fullstack-aws-vision-analytics
-3. Branch: main (or your default branch)
-4. Build provider: AWS CodeBuild
-5. Deploy provider: Amazon S3
+**Slots:**
+- `keyword1` (AMAZON.AlphaNumeric) - Primary search term
+- `keyword2` (AMAZON.AlphaNumeric) - Secondary search term
 
 ## Testing
 
-1. Upload a photo via the frontend
-2. Check CloudWatch logs for index-photos Lambda
-3. Verify photo is indexed in OpenSearch
-4. Search for photos using natural language queries
-5. Verify results are displayed correctly
+### Search Examples
+```
+cat                     -> Returns all photos with cats
+show me dogs            -> Returns all photos with dogs  
+cats and dogs           -> Returns photos with cats OR dogs
+show me farm animals    -> Returns farm animal photos
+```
 
-## Custom Labels
-
-When uploading photos, you can specify custom labels (comma-separated). These will be combined with Rekognition-detected labels and indexed in OpenSearch.
-
-Example: "Sam, Sally, Birthday Party"
-
-## API Endpoints
-
-- **PUT /photos**: Upload a photo to S3
-- **GET /search?q={query}**: Search photos using natural language
-
-## Cost Optimization
-
-- OpenSearch: t2.small.search instance
-- Lambda: Appropriate timeout values (30s for index, 10s for search)
-- S3: Standard storage class
-
-## Troubleshooting
-
-- Check CloudWatch logs for Lambda functions
-- Verify IAM permissions for all services
-- Ensure CORS is configured correctly
-- Check API Gateway logs for API issues
+### Upload Test
+1. Navigate to the frontend URL
+2. Select a photo file
+3. Optionally add custom labels (comma-separated)
+4. Click Upload
+5. Wait for indexing (~5 seconds)
+6. Search for the photo using labels
 
 ## Author
 
 Kathan Gabani (kdg7224)
 
+## Course
+
+CS-GY 9223: Cloud Computing and Big Data Systems - Fall 2024

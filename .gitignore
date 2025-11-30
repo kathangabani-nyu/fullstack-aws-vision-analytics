@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .env
 venv/
+*.zip
 
 # Node
 node_modules/
@@ -11,14 +12,15 @@ node_modules/
 # IDE
 .vscode/
 .idea/
+*.swp
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Temp files
-*.zip
+# Logs
 *.log
 
-# AWS
-.aws/
+# Temporary files
+*.tmp
+output.json
