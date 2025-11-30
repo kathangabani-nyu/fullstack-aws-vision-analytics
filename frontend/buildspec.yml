@@ -1,0 +1,21 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "Starting frontend build and deployment"
+  build:
+    commands:
+      - echo "Building frontend application"
+      - echo "No build step required for vanilla JS/HTML/CSS"
+  post_build:
+    commands:
+      - echo "Deploying frontend to S3"
+      - aws s3 sync . s3://$FRONTEND_BUCKET_NAME --delete --exclude "buildspec.yml" --exclude ".git/*" --exclude ".gitignore"
+      - echo "Frontend deployment completed"
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: .
+
