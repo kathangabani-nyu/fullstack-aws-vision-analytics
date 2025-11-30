@@ -1,7 +1,8 @@
 import json
 import boto3
 import os
-import requests
+import urllib.request
+import base64
 from datetime import datetime
 import logging
 
@@ -26,12 +27,14 @@ def lambda_handler(event, context):
     Detects labels in images using Rekognition and indexes them in OpenSearch.
     """
     try:
+        logger.info(f"Event: {json.dumps(event)}")
+        
         # Extract S3 event details
         for record in event['Records']:
             bucket = record['s3']['bucket']['name']
             object_key = record['s3']['object']['key']
             
-            logger.info(f"Processing image: {object_key} from bucket: {bucket}")
+            logger.info(f"Processing: {object_key} from {bucket}")
             
             # Detect labels using Rekognition
             rekognition_response = rekognition_client.detect_labels(
@@ -47,7 +50,7 @@ def lambda_handler(event, context):
             
             # Extract labels from Rekognition response
             rekognition_labels = [label['Name'].lower() for label in rekognition_response['Labels']]
-            logger.info(f"Rekognition detected labels: {rekognition_labels}")
+            logger.info(f"Rekognition labels: {rekognition_labels}")
             
             # Get S3 object metadata to retrieve custom labels
             try:
@@ -57,15 +60,15 @@ def lambda_handler(event, context):
                 # Parse custom labels (comma-separated)
                 custom_labels = []
                 if custom_labels_str:
-                    custom_labels = [label.strip() for label in custom_labels_str.split(',') if label.strip()]
-                    logger.info(f"Custom labels found: {custom_labels}")
+                    custom_labels = [label.strip().lower() for label in custom_labels_str.split(',') if label.strip()]
+                    logger.info(f"Custom labels: {custom_labels}")
             except Exception as e:
                 logger.warning(f"Error retrieving metadata: {str(e)}")
                 custom_labels = []
             
             # Combine all labels
             all_labels = list(set(rekognition_labels + custom_labels))
-            logger.info(f"All labels to index: {all_labels}")
+            logger.info(f"All labels: {all_labels}")
             
             # Get creation timestamp
             created_timestamp = datetime.utcnow().isoformat()
@@ -78,21 +81,29 @@ def lambda_handler(event, context):
                 "labels": all_labels
             }
             
-            # Index document in OpenSearch
+            # Index document in OpenSearch using urllib
             opensearch_url = f"https://{OPENSEARCH_ENDPOINT}/{OPENSEARCH_INDEX}/_doc"
             
-            response = requests.post(
+            auth = base64.b64encode(f"{OPENSEARCH_USERNAME}:{OPENSEARCH_PASSWORD}".encode('utf-8')).decode('utf-8')
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Basic {auth}"
+            }
+            
+            req = urllib.request.Request(
                 opensearch_url,
-                auth=(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD),
-                json=document,
-                headers={"Content-Type": "application/json"}
+                data=json.dumps(document).encode('utf-8'),
+                headers=headers,
+                method='POST'
             )
             
-            if response.status_code in [200, 201]:
-                logger.info(f"Successfully indexed document: {object_key}")
-            else:
-                logger.error(f"Failed to index document. Status: {response.status_code}, Response: {response.text}")
-                raise Exception(f"OpenSearch indexing failed: {response.text}")
+            with urllib.request.urlopen(req) as response:
+                response_body = response.read().decode('utf-8')
+                if response.status in [200, 201]:
+                    logger.info(f"Successfully indexed: {object_key}")
+                else:
+                    logger.error(f"Failed to index. Status: {response.status}, Response: {response_body}")
+                    raise Exception(f"OpenSearch indexing failed: {response_body}")
         
         return {
             'statusCode': 200,
@@ -100,6 +111,5 @@ def lambda_handler(event, context):
         }
         
     except Exception as e:
-        logger.error(f"Error processing image: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         raise e
-
