@@ -171,6 +171,19 @@ def lambda_handler(event, context):
     Receives query from API Gateway and returns matching photos.
     """
     try:
+        # Handle OPTIONS preflight request for CORS
+        http_method = event.get('httpMethod', '')
+        if http_method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-amz-meta-customlabels',
+                    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
+                },
+                'body': ''
+            }
+        
         # Extract query parameter
         query_params = event.get('queryStringParameters') or {}
         query = query_params.get('q', '')
